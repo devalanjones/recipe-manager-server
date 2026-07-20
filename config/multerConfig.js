@@ -5,7 +5,7 @@ let cloudinary = require("./cloudinary")
 const storage = new CloudinaryStorage({
   cloudinary,
   params: {
-    folder: "mern_uploads",
+    folder: "recipe_uploads",
     allowed_formats: ["jpg", "jpeg", "png", "webp"],
   },
 });
