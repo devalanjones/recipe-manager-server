@@ -6,7 +6,7 @@ const {
   deleteRecipe,
   getRecipeById,
 } = require("../controllers/recipeController");
-const upload = require("../config/multerCoonfig");
+const upload = require("../config/multerConfig");
 const validate = require("../middlewares/validate");
 const recipeValidationSchema = require("../validators/recipeValidation");
 const parseRecipeFormData = require("../middlewares/parsingRecipeFormData");

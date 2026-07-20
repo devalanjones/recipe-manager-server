@@ -7,7 +7,7 @@ let createRecipe = async (req, res) => {
     const recipe = await Recipe.create({
       ...req.body,
       userId: req.user.id,
-      imgUrl: req.file?.filename,
+      imgUrl: req.file.path,
     });
 
     await recipe.save();
@@ -94,7 +94,7 @@ let updateRecipe = async (req, res) => {
     const updateData = { ...req.body };
 
     if (req.file) {
-      updateData.imgUrl = `${req.file.filename}`;
+      updateData.imgUrl = `${req.file.path}`;
     }
      
     updateData.userId = userId
