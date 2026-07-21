@@ -8,8 +8,8 @@ let createRecipe = async (req, res) => {
     const recipe = await Recipe.create({
       ...req.body,
       userId: req.user.id,
-      imgUrl: req.file.path,
-      imgPublicId: req.file.filename,
+      imgUrl: req.file ? req.file.path : null,
+      imgPublicId: req.file ? req.file.filename : null,
     });
 
     // await recipe.save();
@@ -155,12 +155,14 @@ const deleteRecipe = async (req, res) => {
       });
     }
 
-    // Delete image from Cloudinary
     if (recipe.imgPublicId) {
-      await cloudinary.uploader.destroy(recipe.imgPublicId);
+      try {
+        await cloudinary.uploader.destroy(recipe.imgPublicId);
+      } catch (err) {
+        console.log("Cloudinary delete failed:", err.message);
+      }
     }
 
-    // Delete recipe from MongoDB
     await Recipe.findByIdAndDelete(id);
 
     res.status(200).json({
