@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const cloudinary = require("../config/cloudinary");
 let Recipe = require("../models/recipeModel");
 
 // CREATE
@@ -8,9 +9,10 @@ let createRecipe = async (req, res) => {
       ...req.body,
       userId: req.user.id,
       imgUrl: req.file.path,
+      imgPublicId: req.file.filename,
     });
 
-    await recipe.save();
+    // await recipe.save();
 
     res.status(201).json({
       success: true,
@@ -28,7 +30,7 @@ let createRecipe = async (req, res) => {
 const getAllRecipe = async (req, res) => {
   try {
     const recipes = await Recipe.find({
-      userId: req.user.id
+      userId: req.user.id,
     });
 
     res.status(200).json({
@@ -48,7 +50,7 @@ const getAllRecipe = async (req, res) => {
 const getRecipeById = async (req, res) => {
   try {
     const { id } = req.params;
-    let {userId} = req.user.id
+    let { userId } = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -57,7 +59,7 @@ const getRecipeById = async (req, res) => {
       });
     }
 
-    const recipe = await Recipe.findById(id,userId);
+    const recipe = await Recipe.findById(id, userId);
 
     if (!recipe) {
       return res.status(404).json({
@@ -82,7 +84,7 @@ const getRecipeById = async (req, res) => {
 let updateRecipe = async (req, res) => {
   try {
     const { id } = req.params;
-     let {userId} = req.user.id
+    let userId = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -91,30 +93,33 @@ let updateRecipe = async (req, res) => {
       });
     }
 
-    const updateData = { ...req.body };
+    // Find recipe first
+    const recipe = await Recipe.findOne({ _id: id, userId });
 
-    if (req.file) {
-      updateData.imgUrl = `${req.file.path}`;
-    }
-     
-    updateData.userId = userId
-
-    const updatedRecipe = await Recipe.findByIdAndUpdate(
-      { _id: id, userId },
-      { $set: updateData },
-      {
-        returnDocument: "after",
-        runValidators: true,
-      },
-    );
-
-    if (!updatedRecipe) {
+    if (!recipe) {
       return res.status(404).json({
         success: false,
         message: "Recipe not found",
       });
     }
 
+    const updateData = { ...req.body };
+
+    if (req.file) {
+      // Delete old image
+      if (recipe.imgPublicId) {
+        await cloudinary.uploader.destroy(recipe.imgPublicId);
+      }
+
+      // Save new image
+      updateData.imgUrl = req.file.path;
+      updateData.imgPublicId = req.file.filename;
+    }
+
+    const updatedRecipe = await Recipe.findByIdAndUpdate(id, updateData, {
+      returnDocument: "after",
+      runValidators: true,
+    });
     res.status(200).json({
       success: true,
       message: "Recipe updated successfully",
@@ -131,7 +136,7 @@ let updateRecipe = async (req, res) => {
 const deleteRecipe = async (req, res) => {
   try {
     const { id } = req.params;
-     let {userId} = req.user.id
+    let userId = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -140,14 +145,23 @@ const deleteRecipe = async (req, res) => {
       });
     }
 
-    const deletedRecipe = await Recipe.findByIdAndDelete(id,userId);
+    // Find the recipe owned by the current user
+    const recipe = await Recipe.findOne({ _id: id, userId });
 
-    if (!deletedRecipe) {
+    if (!recipe) {
       return res.status(404).json({
         success: false,
         message: "Recipe not found",
       });
     }
+
+    // Delete image from Cloudinary
+    if (recipe.imgPublicId) {
+      await cloudinary.uploader.destroy(recipe.imgPublicId);
+    }
+
+    // Delete recipe from MongoDB
+    await Recipe.findByIdAndDelete(id);
 
     res.status(200).json({
       success: true,
