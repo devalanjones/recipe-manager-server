@@ -1,22 +1,50 @@
 const mongoose = require("mongoose");
 const cloudinary = require("../config/cloudinary");
-let Recipe = require("../models/recipeModel");
+const Recipe = require("../models/recipeModel");
 
-// CREATE
-let createRecipe = async (req, res) => {
+// Helper to check user ownership or admin override (for edit/delete only)
+const getOwnershipQuery = (recipeId, user) => {
+  const query = { _id: recipeId };
+  if (user.role !== "admin") {
+    query.userId = user.id;
+  }
+  return query;
+};
+
+// GET PUBLIC / ALL USERS' RECIPES (Explore feed)
+const getPublicRecipes = async (req, res) => {
   try {
-    const recipe = await Recipe.create({
-      ...req.body,
-      userId: req.user.id,
-      imgUrl: req.file ? req.file.path : null,
-      imgPublicId: req.file ? req.file.filename : null,
-    });
+    const { search, page = 1, limit = 9 } = req.query;
 
-    // await recipe.save();
+    const query = {};
+    // Only add search filter if it contains non-whitespace text
+    if (search && search.trim() !== "") {
+      query.$or = [
+        { title: { $regex: search.trim(), $options: "i" } },
+        { description: { $regex: search.trim(), $options: "i" } },
+        { cuisine: { $regex: search.trim(), $options: "i" } },
+      ];
+    }
 
-    res.status(201).json({
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 9);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [recipes, total] = await Promise.all([
+      Recipe.find(query)
+        .populate("userId", "username email")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      Recipe.countDocuments(query),
+    ]);
+
+    res.status(200).json({
       success: true,
-      message: "recipe created successfully",
+      count: recipes.length,
+      totalPages: Math.ceil(total / limitNum) || 1,
+      currentPage: pageNum,
+      data: recipes,
     });
   } catch (error) {
     res.status(500).json({
@@ -26,12 +54,42 @@ let createRecipe = async (req, res) => {
   }
 };
 
-// GET ALL
+// CREATE
+const createRecipe = async (req, res) => {
+  try {
+    const recipe = await Recipe.create({
+      ...req.body,
+      userId: req.user.id,
+      imgUrl: req.file ? req.file.path : null,
+      imgPublicId: req.file ? req.file.filename : null,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Recipe created successfully",
+      data: recipe,
+    });
+  } catch (error) {
+    if (req.file?.filename) {
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+      } catch (err) {
+        console.error("Cloudinary cleanup failed:", err.message);
+      }
+    }
+
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// GET MY RECIPES (Admins see all; regular users see only their own)
 const getAllRecipe = async (req, res) => {
   try {
-    const recipes = await Recipe.find({
-      userId: req.user.id,
-    });
+    const query = req.user.role === "admin" ? {} : { userId: req.user.id };
+    const recipes = await Recipe.find(query).sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -46,11 +104,10 @@ const getAllRecipe = async (req, res) => {
   }
 };
 
-// GET BY ID
+// GET BY ID (Allows any user to view any recipe detail)
 const getRecipeById = async (req, res) => {
   try {
     const { id } = req.params;
-    let { userId } = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -59,7 +116,10 @@ const getRecipeById = async (req, res) => {
       });
     }
 
-    const recipe = await Recipe.findById(id, userId);
+    const recipe = await Recipe.findById(id).populate(
+      "userId",
+      "username email",
+    );
 
     if (!recipe) {
       return res.status(404).json({
@@ -80,11 +140,10 @@ const getRecipeById = async (req, res) => {
   }
 };
 
-// UPDATE
-let updateRecipe = async (req, res) => {
+// UPDATE (Restricted to owner or admin)
+const updateRecipe = async (req, res) => {
   try {
     const { id } = req.params;
-    let userId = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -93,25 +152,30 @@ let updateRecipe = async (req, res) => {
       });
     }
 
-    // Find recipe first
-    const recipe = await Recipe.findOne({ _id: id, userId });
+    const query = getOwnershipQuery(id, req.user);
+    const recipe = await Recipe.findOne(query);
 
     if (!recipe) {
+      if (req.file?.filename) {
+        await cloudinary.uploader.destroy(req.file.filename);
+      }
       return res.status(404).json({
         success: false,
-        message: "Recipe not found",
+        message: "Recipe not found or unauthorized",
       });
     }
 
     const updateData = { ...req.body };
 
     if (req.file) {
-      // Delete old image
       if (recipe.imgPublicId) {
-        await cloudinary.uploader.destroy(recipe.imgPublicId);
+        try {
+          await cloudinary.uploader.destroy(recipe.imgPublicId);
+        } catch (err) {
+          console.error("Cloudinary delete failed:", err.message);
+        }
       }
 
-      // Save new image
       updateData.imgUrl = req.file.path;
       updateData.imgPublicId = req.file.filename;
     }
@@ -120,9 +184,11 @@ let updateRecipe = async (req, res) => {
       returnDocument: "after",
       runValidators: true,
     });
+
     res.status(200).json({
       success: true,
       message: "Recipe updated successfully",
+      data: updatedRecipe,
     });
   } catch (error) {
     res.status(500).json({
@@ -132,11 +198,10 @@ let updateRecipe = async (req, res) => {
   }
 };
 
-// DELETE
+// DELETE (Restricted to owner or admin)
 const deleteRecipe = async (req, res) => {
   try {
     const { id } = req.params;
-    let userId = req.user.id;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -145,13 +210,13 @@ const deleteRecipe = async (req, res) => {
       });
     }
 
-    // Find the recipe owned by the current user
-    const recipe = await Recipe.findOne({ _id: id, userId });
+    const query = getOwnershipQuery(id, req.user);
+    const recipe = await Recipe.findOne(query);
 
     if (!recipe) {
       return res.status(404).json({
         success: false,
-        message: "Recipe not found",
+        message: "Recipe not found or unauthorized",
       });
     }
 
@@ -159,7 +224,7 @@ const deleteRecipe = async (req, res) => {
       try {
         await cloudinary.uploader.destroy(recipe.imgPublicId);
       } catch (err) {
-        console.log("Cloudinary delete failed:", err.message);
+        console.error("Cloudinary delete failed:", err.message);
       }
     }
 
@@ -180,6 +245,7 @@ const deleteRecipe = async (req, res) => {
 module.exports = {
   createRecipe,
   getAllRecipe,
+  getPublicRecipes,
   getRecipeById,
   updateRecipe,
   deleteRecipe,

@@ -1,17 +1,29 @@
-let express = require("express");
+const express = require("express");
 const {
   createRecipe,
   getAllRecipe,
+  getPublicRecipes,
+  getRecipeById,
   updateRecipe,
   deleteRecipe,
-  getRecipeById,
 } = require("../controllers/recipeController");
 const upload = require("../config/multerConfig");
 const validate = require("../middlewares/validate");
 const recipeValidationSchema = require("../validators/recipeValidation");
 const parseRecipeFormData = require("../middlewares/parsingRecipeFormData");
-let recipeRouter = express.Router();
 
+const recipeRouter = express.Router();
+
+// User-specific list (dashboard)
+recipeRouter.get("/", getAllRecipe);
+// Public / All-users feed (MUST be defined before /:id)
+recipeRouter.get("/explore", getPublicRecipes);
+
+
+// Single recipe view
+recipeRouter.get("/:id", getRecipeById);
+
+// Create recipe
 recipeRouter.post(
   "/",
   upload.single("image"),
@@ -19,8 +31,8 @@ recipeRouter.post(
   validate(recipeValidationSchema),
   createRecipe,
 );
-recipeRouter.get("/", getAllRecipe);
-recipeRouter.get("/:id", getRecipeById);
+
+// Update recipe
 recipeRouter.put(
   "/:id",
   upload.single("image"),
@@ -28,6 +40,8 @@ recipeRouter.put(
   validate(recipeValidationSchema),
   updateRecipe,
 );
+
+// Delete recipe
 recipeRouter.delete("/:id", deleteRecipe);
 
 module.exports = recipeRouter;
